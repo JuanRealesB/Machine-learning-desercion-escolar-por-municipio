@@ -1,5 +1,6 @@
 /* Alerta temprana de deserción escolar — lógica del sitio.
-   Lee data/resultados.json (generado por pipeline/entrenar.py). */
+   Lee data/resultados.json (generado por pipeline/entrenar.py).
+   Cada horizonte (1 o 2 años) tiene su propio modelo; el selector cambia todo el sitio. */
 
 (() => {
   "use strict";
@@ -11,21 +12,26 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   const NOMBRES_MODELO = {
-    persistencia: "Repetir el año anterior (línea base)",
+    persistencia: "Repetir el último dato conocido (línea base)",
     ridge: "Regresión Ridge",
-    gbm: "Gradient boosting",
+    gbm: "Gradient Boosting",
   };
 
   let datos = null;
+  let h = null;            // horizonte activo, como texto ("1", "2")
   const graficos = {};
+
+  const pron = () => datos.pronosticos[h];
+  const ANIOS_TEXTO = { 1: "un año", 2: "dos años", 3: "tres años" };
+  const textoHorizonte = (n) => ANIOS_TEXTO[n] ?? `${n} años`;
 
   // ---------------------------------------------------------------- colores
   function color(nombre) {
     return getComputedStyle(document.documentElement).getPropertyValue(nombre).trim();
   }
   function conAlfa(hex, a) {
-    const h = hex.replace("#", "");
-    const n = parseInt(h.length === 3 ? h.split("").map((c) => c + c).join("") : h, 16);
+    const c = hex.replace("#", "");
+    const n = parseInt(c.length === 3 ? c.split("").map((x) => x + x).join("") : c, 16);
     return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
   }
   function estiloBase() {
@@ -46,6 +52,7 @@
       const resp = await fetch("data/resultados.json", { cache: "no-cache" });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       datos = await resp.json();
+      if (!datos.pronosticos) throw new Error("Formato antiguo");
     } catch (err) {
       const estado = $("#estado");
       estado.hidden = false;
@@ -54,26 +61,28 @@
       $("#top-alertas").innerHTML = "<li class=\"cargando\">Sin resultados todavía.</li>";
       return;
     }
+    const horizontes = Object.keys(datos.pronosticos).sort();
+    const pedido = location.hash.replace("#", "");
+    const porAnio = horizontes.find((k) => String(datos.pronosticos[k].anio_pronostico) === pedido);
+    h = porAnio ?? horizontes[horizontes.length - 1];
+
     rellenarMeta();
-    pintarTop();
-    pintarMetricas();
+    prepararSelector(horizontes);
     prepararExplorador();
     prepararSimulador();
     if (window.Chart) {
-      pintarGraficos();
-      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", pintarGraficos);
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { pintarTendencia(); pintarGraficosHorizonte(); });
     }
+    cambiarHorizonte(h, false);
   }
 
   function rellenarMeta() {
     const m = datos.meta;
     const valores = {
       ...m,
+      anio_siguiente: m.anio_max + 1,
       filas: m.filas.toLocaleString("es-CO"),
       generado: new Date(m.generado).toLocaleDateString("es-CO", { year: "numeric", month: "long", day: "numeric" }),
-      umbral_alerta: fmt(m.umbral_alerta),
-      pares_prueba: m.pares_prueba.toLocaleString("es-CO"),
-      modelo_nombre: (NOMBRES_MODELO[m.modelo_elegido] ?? m.modelo_elegido ?? "").toLowerCase(),
     };
     document.querySelectorAll("[data-meta]").forEach((el) => {
       const v = valores[el.dataset.meta];
@@ -83,46 +92,110 @@
       const v = m[el.dataset.metaHref];
       if (v) el.href = v;
     });
+    const hs = Object.keys(datos.pronosticos).sort();
+    hs.forEach((k, i) => {
+      const th = document.getElementById(`col-h${i + 1}`);
+      if (th) th.textContent = `Estimada ${datos.pronosticos[k].anio_pronostico}`;
+    });
+  }
+
+  function rellenarHorizonte() {
+    const p = pron();
+    const valores = {
+      anio_pronostico: p.anio_pronostico,
+      anio_prueba: p.anio_prueba,
+      pares_prueba: p.pares_prueba.toLocaleString("es-CO"),
+      umbral_alerta: fmt(p.umbral_alerta),
+      modelo_nombre: NOMBRES_MODELO[p.modelo_elegido] ?? p.modelo_elegido,
+      horizonte_texto: textoHorizonte(p.horizonte),
+    };
+    document.querySelectorAll("[data-h]").forEach((el) => {
+      const v = valores[el.dataset.h];
+      if (v !== undefined) el.textContent = v;
+    });
+  }
+
+  // ---------------------------------------------------------------- selector
+  function prepararSelector(horizontes) {
+    $("#selector-horizonte").innerHTML = horizontes.map((k) => {
+      const p = datos.pronosticos[k];
+      const detalle = `a ${textoHorizonte(p.horizonte)}`;
+      return `<input type="radio" name="horizonte" id="h-${k}" value="${k}">
+        <label for="h-${k}"><span class="anio">${p.anio_pronostico}</span><span class="detalle">${detalle}</span></label>`;
+    }).join("");
+    $("#selector-horizonte").addEventListener("change", (e) => cambiarHorizonte(e.target.value, true));
+  }
+
+  function cambiarHorizonte(nuevo, actualizarEnlace) {
+    h = nuevo;
+    document.getElementById(`h-${h}`).checked = true;
+    if (actualizarEnlace) history.replaceState(null, "", `#${pron().anio_pronostico}`);
+
+    const p = pron();
+    const partes = Object.values(datos.pronosticos)
+      .map((q) => `±${fmt(q.metricas[q.modelo_elegido].mae)} p.p. para ${q.anio_pronostico}`);
+    const errores = partes.length > 1 ? `${partes.slice(0, -1).join(", ")} y ${partes.at(-1)}` : partes[0];
+    $("#nota-horizonte").textContent = p.horizonte === 1
+      ? `Pronóstico más preciso. Error medio en la prueba: ${errores}.`
+      : `Mira más lejos, con más incertidumbre. Error medio en la prueba: ${errores}.`;
+
+    rellenarHorizonte();
+    pintarTop();
+    pintarMetricas();
+    visibles = POR_PAGINA;
+    pintarTabla();
+    cargarMunicipio();
+    if (window.Chart) {
+      if (!graficos["g-tendencia"]) pintarTendencia();
+      pintarGraficosHorizonte();
+    }
   }
 
   // ---------------------------------------------------------------- portada
+  function ordenados() {
+    const p = pron();
+    return datos.municipios
+      .map((m, i) => ({ ...m, pred: p.pred[i], alerta: p.alerta[i], i }))
+      .sort((a, b) => b.pred - a.pred);
+  }
+
   function pintarTop() {
     const lista = $("#top-alertas");
-    lista.innerHTML = datos.alertas.slice(0, 5).map((a) => `
+    lista.classList.remove("listo");
+    lista.innerHTML = ordenados().slice(0, 5).map((a) => `
       <li>
         <span class="nombre"><mark>${esc(a.municipio)}</mark><span class="depto">${esc(a.departamento)}</span></span>
-        <span class="valor">${fmt(a.desercion_pred, 1)}&nbsp;% <small>vs. ${fmt(a.desercion_actual, 1)} %</small></span>
+        <span class="valor">${fmt(a.pred, 1)}&nbsp;% <small>vs. ${fmt(a.desercion_actual, 1)} % en ${datos.meta.anio_max}</small></span>
       </li>`).join("");
-    requestAnimationFrame(() => lista.classList.add("listo"));
+    void lista.offsetWidth;  // reinicia la animación del resaltador
+    lista.classList.add("listo");
   }
 
   // ---------------------------------------------------------------- métricas
   function pintarMetricas() {
-    const met = datos.metricas;
-    const mejor = Object.keys(met).reduce((a, b) => (met[a].mae <= met[b].mae ? a : b));
+    const p = pron();
+    const met = p.metricas;
+    const elegido = p.modelo_elegido;
     $("#tabla-metricas").innerHTML = Object.entries(met).map(([k, v]) => `
-      <tr class="${k === mejor ? "mejor" : ""}">
+      <tr class="${k === elegido ? "mejor" : ""}">
         <td>${NOMBRES_MODELO[k] ?? k}</td>
         <td class="num">${fmt(v.mae, 3)}</td><td class="num">${fmt(v.rmse, 3)}</td><td class="num">${fmt(v.r2, 3)}</td>
       </tr>`).join("");
 
-    const elegido = datos.meta.modelo_elegido;
     const nombre = NOMBRES_MODELO[elegido] ?? elegido;
     const base = met.persistencia.mae;
     const err = met[elegido].mae;
     const mejora = ((base - err) / base) * 100;
     $("#lectura-metricas").textContent = mejora > 0
-      ? `El modelo elegido (${nombre.toLowerCase()}) se equivoca en promedio ${fmt(err)} puntos porcentuales, un ${fmt(mejora, 1)} % menos que la línea base.`
-      : `En este corte ningún modelo supera a la línea base (${fmt(base)} p.p.): la deserción del año anterior ya explica casi todo. El pronóstico se publica con ${nombre.toLowerCase()} (${fmt(err)} p.p.), pero conviene revisar variables o el periodo de entrenamiento.`;
+      ? `El modelo elegido (${nombre}) se equivoca en promedio ${fmt(err)} puntos porcentuales, un ${fmt(mejora, 1)} % menos que la línea base.`
+      : `En este horizonte ningún modelo supera a la línea base (${fmt(base)} p.p.): el último dato conocido ya explica casi todo. El pronóstico se publica con ${nombre} (${fmt(err)} p.p.), pero conviene leerlo con cautela.`;
   }
 
   // ---------------------------------------------------------------- gráficos
-  function pintarGraficos() {
+  function pintarTendencia() {
     estiloBase();
     const tinta = color("--tinta");
-    const margen = color("--margen");
     const gris = color("--serie-2");
-
     const t = datos.tendencia;
     crearGrafico("g-tendencia", {
       type: "line",
@@ -139,8 +212,16 @@
         scales: { y: { beginAtZero: true, title: { display: true, text: "Deserción (%)" } }, x: { grid: { display: false } } },
       },
     });
+  }
 
-    const puntos = datos.real_vs_pred.filter((d) => d.y !== null && d.p !== null);
+  function pintarGraficosHorizonte() {
+    estiloBase();
+    const p = pron();
+    const tinta = color("--tinta");
+    const margen = color("--margen");
+    const gris = color("--serie-2");
+
+    const puntos = p.real_vs_pred.filter((d) => d.y !== null && d.p !== null);
     const maximo = Math.ceil(Math.max(...puntos.map((d) => Math.max(d.y, d.p)), 1));
     crearGrafico("g-dispersion", {
       type: "scatter",
@@ -156,13 +237,13 @@
           tooltip: { callbacks: { label: (c) => c.raw.m ? `${c.raw.m} (${c.raw.d}): real ${pct(c.raw.y)}, predicha ${pct(c.raw.x)}` : "" } },
         },
         scales: {
-          x: { min: 0, max: maximo, title: { display: true, text: "Deserción predicha (%)" } },
-          y: { min: 0, max: maximo, title: { display: true, text: "Deserción observada (%)" } },
+          x: { min: 0, max: maximo, title: { display: true, text: `Deserción predicha para ${p.anio_prueba} (%)` } },
+          y: { min: 0, max: maximo, title: { display: true, text: `Deserción observada en ${p.anio_prueba} (%)` } },
         },
       },
     });
 
-    const imp = datos.importancia.filter((d) => d.importancia > 0).slice(0, 10);
+    const imp = p.importancia.filter((d) => d.importancia > 0).slice(0, 10);
     $("#contenedor-importancia").style.height = `${Math.max(240, imp.length * 34 + 60)}px`;
     crearGrafico("g-importancia", {
       type: "bar",
@@ -174,7 +255,7 @@
       },
     });
 
-    const dep = datos.por_departamento;
+    const dep = p.por_departamento;
     $("#contenedor-deptos").style.height = `${Math.max(320, dep.length * 26 + 80)}px`;
     crearGrafico("g-deptos", {
       type: "bar",
@@ -182,7 +263,7 @@
         labels: dep.map((d) => d.departamento),
         datasets: [
           { label: `Deserción ${datos.meta.anio_max}`, data: dep.map((d) => d.desercion_actual), backgroundColor: gris, barThickness: 9 },
-          { label: `Estimada ${datos.meta.anio_pronostico}`, data: dep.map((d) => d.desercion_pred), backgroundColor: tinta, barThickness: 9 },
+          { label: `Estimada ${p.anio_pronostico}`, data: dep.map((d) => d.desercion_pred), backgroundColor: tinta, barThickness: 9 },
         ],
       },
       options: {
@@ -202,49 +283,52 @@
   }
 
   function prepararExplorador() {
-    const deptos = [...new Set(datos.alertas.map((a) => a.departamento))].sort((a, b) => a.localeCompare(b, "es"));
+    const deptos = [...new Set(datos.municipios.map((a) => a.departamento))].sort((a, b) => a.localeCompare(b, "es"));
     $("#f-depto").insertAdjacentHTML("beforeend", deptos.map((d) => `<option>${esc(d)}</option>`).join(""));
     ["#f-depto", "#f-buscar", "#f-alerta"].forEach((s) =>
       $(s).addEventListener("input", () => { visibles = POR_PAGINA; pintarTabla(); }));
     $("#ver-mas").addEventListener("click", () => { visibles += POR_PAGINA; pintarTabla(); });
-    pintarTabla();
   }
 
   function pintarTabla() {
+    const hs = Object.keys(datos.pronosticos).sort();
     const depto = $("#f-depto").value;
     const texto = normalizar($("#f-buscar").value.trim());
     const soloAlerta = $("#f-alerta").checked;
-    const filas = datos.alertas.filter((a) =>
+    const filas = ordenados().filter((a) =>
       (!depto || a.departamento === depto) &&
       (!texto || normalizar(a.municipio).includes(texto)) &&
       (!soloAlerta || a.alerta));
 
     $("#tabla-municipios").innerHTML = filas.slice(0, visibles).map((a) => {
-      const cambio = a.desercion_pred - a.desercion_actual;
+      const cambio = a.pred - a.desercion_actual;
       const clase = cambio > 0.05 ? "sube" : "baja";
       const signo = cambio > 0 ? "+" : "";
       const nombre = a.alerta ? `<mark>${esc(a.municipio)}</mark>` : esc(a.municipio);
+      const columnas = hs.map((k) => {
+        const v = datos.pronosticos[k].pred[a.i];
+        return k === h ? `<td class="num"><strong>${pct(v)}</strong></td>` : `<td class="num">${pct(v)}</td>`;
+      }).join("");
       return `<tr>
         <td>${nombre}</td><td>${esc(a.departamento)}</td>
-        <td class="num">${pct(a.desercion_actual)}</td>
-        <td class="num"><strong>${pct(a.desercion_pred)}</strong></td>
+        <td class="num">${pct(a.desercion_actual)}</td>${columnas}
         <td class="num ${clase}">${signo}${fmt(cambio)}</td>
       </tr>`;
-    }).join("") || `<tr><td colspan="5">Ningún municipio coincide con la búsqueda. Prueba con otro nombre o quita los filtros.</td></tr>`;
+    }).join("") || `<tr><td colspan="${4 + hs.length}">Ningún municipio coincide con la búsqueda. Prueba con otro nombre o quita los filtros.</td></tr>`;
 
     const mostradas = Math.min(visibles, filas.length);
-    $("#resumen-tabla").textContent = `Mostrando ${mostradas.toLocaleString("es-CO")} de ${filas.length.toLocaleString("es-CO")} municipios, ordenados por deserción estimada`;
+    $("#resumen-tabla").textContent = `Mostrando ${mostradas.toLocaleString("es-CO")} de ${filas.length.toLocaleString("es-CO")} municipios, ordenados por deserción estimada para ${pron().anio_pronostico}`;
     $("#ver-mas").hidden = visibles >= filas.length;
   }
 
   // ---------------------------------------------------------------- simulador
-  let sim = null;
+  let sim = [];
   let valoresBase = [];
 
   function predecirRidge(x) {
-    const s = datos.simulador;
+    const s = pron().simulador;
     let y = s.intercepto;
-    for (let i = 0; i < s.variables.length; i++) {
+    for (let i = 0; i < x.length; i++) {
       const v = (x[i] === null || x[i] === undefined) ? s.medianas[i] : x[i];
       y += s.coeficientes[i] * ((v - s.medias[i]) / s.escalas[i]);
     }
@@ -252,26 +336,12 @@
   }
 
   function prepararSimulador() {
-    const s = datos.simulador;
-    // Las seis variables con mayor efecto estandarizado
-    sim = s.coeficientes.map((c, i) => ({ i, peso: Math.abs(c) }))
-      .sort((a, b) => b.peso - a.peso).slice(0, 6).map((d) => d.i);
-
     const grupos = {};
-    datos.alertas.forEach((a, idx) => (grupos[a.departamento] ??= []).push({ a, idx }));
+    datos.municipios.forEach((a, idx) => (grupos[a.departamento] ??= []).push({ a, idx }));
     $("#s-municipio").innerHTML = Object.keys(grupos).sort((a, b) => a.localeCompare(b, "es")).map((d) =>
       `<optgroup label="${esc(d)}">${grupos[d]
         .sort((p, q) => p.a.municipio.localeCompare(q.a.municipio, "es"))
         .map(({ a, idx }) => `<option value="${idx}">${esc(a.municipio)}</option>`).join("")}</optgroup>`).join("");
-
-    $("#s-controles").innerHTML = sim.map((i) => {
-      const [min, max] = s.rangos[i];
-      const paso = Math.max((max - min) / 200, 0.01).toFixed(2);
-      return `<div class="control">
-        <label for="s-v${i}"><span class="fila"><span>${esc(s.etiquetas[i])}</span><output id="s-o${i}" for="s-v${i}"></output></span></label>
-        <input id="s-v${i}" type="range" min="${min}" max="${max}" step="${paso}" data-i="${i}">
-      </div>`;
-    }).join("");
 
     $("#s-municipio").addEventListener("change", cargarMunicipio);
     $("#s-controles").addEventListener("input", (e) => {
@@ -279,31 +349,46 @@
       actualizarSimulacion();
     });
     $("#s-reiniciar").addEventListener("click", cargarMunicipio);
-    cargarMunicipio();
+  }
+
+  function construirControles() {
+    // Las seis variables con mayor efecto estandarizado en el modelo del horizonte activo
+    const s = pron().simulador;
+    const v = datos.variables;
+    sim = s.coeficientes.map((c, i) => ({ i, peso: Math.abs(c) }))
+      .sort((a, b) => b.peso - a.peso).slice(0, 6).map((d) => d.i);
+    $("#s-controles").innerHTML = sim.map((i) => {
+      const [min, max] = v.rangos[i];
+      const paso = Math.max((max - min) / 200, 0.01).toFixed(2);
+      return `<div class="control">
+        <label for="s-v${i}"><span class="fila"><span>${esc(v.etiquetas[i])}</span><output id="s-o${i}" for="s-v${i}"></output></span></label>
+        <input id="s-v${i}" type="range" min="${min}" max="${max}" step="${paso}">
+      </div>`;
+    }).join("");
   }
 
   function cargarMunicipio() {
-    const s = datos.simulador;
-    const a = datos.alertas[Number($("#s-municipio").value)];
+    construirControles();
+    const s = pron().simulador;
+    const rangos = datos.variables.rangos;
+    const a = datos.municipios[Number($("#s-municipio").value)];
     valoresBase = a.x.map((v, i) => (v === null ? s.medianas[i] : v));
     sim.forEach((i) => {
-      const control = document.getElementById(`s-v${i}`);
-      control.value = Math.min(Math.max(valoresBase[i], s.rangos[i][0]), s.rangos[i][1]);
-      delete control.dataset.tocado;
+      document.getElementById(`s-v${i}`).value = Math.min(Math.max(valoresBase[i], rangos[i][0]), rangos[i][1]);
     });
     $("#s-base").textContent = pct(predecirRidge(valoresBase));
     actualizarSimulacion();
   }
 
   function actualizarSimulacion() {
-    const s = datos.simulador;
+    const nombres = datos.variables.nombres;
     const x = [...valoresBase];
     sim.forEach((i) => {
       const control = document.getElementById(`s-v${i}`);
       // Mientras no se mueva el control se conserva el valor real (puede estar fuera del rango del deslizador)
       const v = control.dataset.tocado ? Number(control.value) : valoresBase[i];
       x[i] = v;
-      document.getElementById(`s-o${i}`).textContent = s.variables[i] === "log_poblacion"
+      document.getElementById(`s-o${i}`).textContent = nombres[i] === "log_poblacion"
         ? `${Math.round(Math.expm1(v)).toLocaleString("es-CO")} personas`
         : fmt(v);
     });

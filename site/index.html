@@ -18,11 +18,17 @@
     <div class="hoja">
       <p class="margen-etiqueta">Datos abiertos del MEN</p>
       <div class="cuerpo">
-        <h1>¿Dónde será más alta la deserción escolar en <span data-meta="anio_pronostico">el próximo año</span>?</h1>
-        <p class="entrada">Un modelo de machine learning entrenado con <span data-meta="filas">miles de</span> registros oficiales del Ministerio de Educación Nacional estima, municipio por municipio, la tasa de deserción del año siguiente. Sirve para mirar antes, no para señalar.</p>
+        <h1>¿Dónde será más alta la deserción escolar en <span data-h="anio_pronostico">los próximos años</span>?</h1>
+        <p class="entrada">Un modelo de machine learning entrenado con <span data-meta="filas">miles de</span> registros oficiales del Ministerio de Educación Nacional estima, municipio por municipio, la tasa de deserción de los próximos años. Sirve para mirar antes, no para señalar.</p>
+
+        <fieldset class="horizonte">
+          <legend>Año del pronóstico</legend>
+          <div id="selector-horizonte" class="pestanas"></div>
+          <p id="nota-horizonte" class="nota-horizonte" aria-live="polite"></p>
+        </fieldset>
 
         <figure class="lista-llamado" aria-labelledby="titulo-lista">
-          <figcaption id="titulo-lista">Mayor deserción estimada para <span data-meta="anio_pronostico">el próximo año</span></figcaption>
+          <figcaption id="titulo-lista">Mayor deserción estimada para <span data-h="anio_pronostico">—</span></figcaption>
           <ol id="top-alertas" class="llamado">
             <li class="cargando">Cargando resultados…</li>
           </ol>
@@ -50,11 +56,12 @@
         <ol class="pasos">
           <li><strong>Descarga.</strong> El pipeline consulta la API de datos.gov.co (conjunto <a data-meta-href="url_fuente" href="https://www.datos.gov.co/d/nudc-7mev">nudc-7mev</a>) y guarda una copia.</li>
           <li><strong>Limpieza.</strong> Normaliza códigos DANE, corrige separadores de miles y descarta tasas imposibles, como coberturas superiores a 200 %.</li>
-          <li><strong>Pares año a año.</strong> Cada fila combina los indicadores de un municipio en el año <em>t</em> con su deserción en el año <em>t + 1</em>. Así el modelo solo usa información disponible antes de que ocurra lo que predice.</li>
-          <li><strong>Validación temporal.</strong> Se entrena con los años anteriores y se evalúa en el último año conocido (<span data-meta="anio_prueba">—</span>), que el modelo nunca vio.</li>
-          <li><strong>Pronóstico.</strong> El modelo con menor error en la prueba (<span data-meta="modelo_nombre">—</span>) se reentrena con toda la historia y estima la deserción de <span data-meta="anio_pronostico">—</span> a partir de los datos de <span data-meta="anio_max">—</span>.</li>
+          <li><strong>Pares por horizonte.</strong> Cada fila combina los indicadores de un municipio en el año <em>t</em> con su deserción en <em>t + 1</em> o en <em>t + 2</em>. Hay un modelo para cada horizonte, y ninguno usa información posterior a lo que predice.</li>
+          <li><strong>Validación temporal.</strong> Se entrena con los años anteriores y se evalúa en el último año conocido (<span data-h="anio_prueba">—</span>), que el modelo nunca vio.</li>
+          <li><strong>Pronóstico.</strong> En cada horizonte, el modelo con menor error en la prueba se reentrena con toda la historia y estima la deserción a partir de los datos de <span data-meta="anio_max">—</span>, el último año publicado.</li>
         </ol>
         <aside class="nota">
+          <p><strong>Por qué el pronóstico empieza en <span data-meta="anio_siguiente">—</span>.</strong> El Ministerio publica las estadísticas con cerca de un año de retraso, así que el último dato disponible es <span data-meta="anio_max">—</span>. El pronóstico a un año estima una cifra que quizá ya ocurrió pero aún no se conoce; el de dos años mira más lejos, con más error. Cuando el MEN publique un año nuevo, el sitio se actualiza solo y ambos pronósticos avanzan.</p>
           <p><strong>Por qué no se usa la aprobación del mismo año.</strong> En estos datos, aprobación, reprobación y deserción del mismo año suman casi 100 %. Usarlas para predecir la deserción de ese mismo año sería hacer trampa: el modelo “adivinaría” con la respuesta a la vista. Por eso el objetivo es siempre el año siguiente.</p>
         </aside>
       </div>
@@ -64,7 +71,7 @@
       <p class="margen-etiqueta">Desempeño</p>
       <div class="cuerpo">
         <h2 id="t-desempeno">¿Qué tan bien predice?</h2>
-        <p>Los tres modelos se evaluaron sobre <span data-meta="pares_prueba">—</span> municipios en <span data-meta="anio_prueba">—</span>. La referencia mínima es suponer que cada municipio repetirá la deserción del año anterior: un modelo solo vale la pena si la supera.</p>
+        <p>Para el pronóstico de <span data-h="anio_pronostico">—</span>, los tres modelos se evaluaron sobre <span data-h="pares_prueba">—</span> municipios en <span data-h="anio_prueba">—</span>, prediciendo <span data-h="horizonte_texto">—</span> hacia adelante. La referencia mínima es suponer que cada municipio repetirá su último dato conocido: un modelo solo vale la pena si la supera.</p>
         <div class="tabla-envoltura">
           <table class="tabla-metricas">
             <caption>Error en puntos porcentuales de deserción (menor es mejor, salvo R²)</caption>
@@ -82,7 +89,7 @@
       <p class="margen-etiqueta">Variables</p>
       <div class="cuerpo">
         <h2 id="t-variables">Qué información pesa más</h2>
-        <p>Importancia por permutación en el modelo elegido (<span data-meta="modelo_nombre">—</span>): cuánto empeora su error cuando se desordena al azar una variable. Mide utilidad para predecir, no causalidad.</p>
+        <p>Importancia por permutación en el modelo elegido para <span data-h="anio_pronostico">—</span> (<span data-h="modelo_nombre">—</span>): cuánto empeora su error cuando se desordena al azar una variable. Mide utilidad para predecir, no causalidad.</p>
         <div class="grafico" id="contenedor-importancia"><canvas id="g-importancia" role="img" aria-label="Importancia de las variables del modelo"></canvas></div>
       </div>
     </section>
@@ -91,7 +98,7 @@
       <p class="margen-etiqueta">Explorar</p>
       <div class="cuerpo ancho">
         <h2 id="t-explorar">Busca tu municipio</h2>
-        <p>Los municipios <mark>resaltados</mark> están en el 10 % con mayor deserción estimada (umbral: <span data-meta="umbral_alerta">—</span> %).</p>
+        <p>Los municipios <mark>resaltados</mark> están en el 10 % con mayor deserción estimada para <span data-h="anio_pronostico">—</span> (umbral: <span data-h="umbral_alerta">—</span> %). Cambia el año arriba para ver el otro pronóstico.</p>
         <div class="filtros">
           <label>Departamento
             <select id="f-depto"><option value="">Todos</option></select>
@@ -107,8 +114,9 @@
             <thead><tr>
               <th scope="col">Municipio</th><th scope="col">Departamento</th>
               <th scope="col" class="num">Deserción <span data-meta="anio_max"></span></th>
-              <th scope="col" class="num">Estimada <span data-meta="anio_pronostico"></span></th>
-              <th scope="col" class="num">Cambio</th>
+              <th scope="col" class="num" id="col-h1">Estimada</th>
+              <th scope="col" class="num" id="col-h2">Estimada</th>
+              <th scope="col" class="num">Cambio a <span data-h="anio_pronostico"></span></th>
             </tr></thead>
             <tbody id="tabla-municipios"></tbody>
           </table>
@@ -125,7 +133,7 @@
       <p class="margen-etiqueta">Simular</p>
       <div class="cuerpo">
         <h2 id="t-simulador">¿Qué pasaría si cambian los indicadores?</h2>
-        <p>Elige un municipio y mueve las variables con más peso en el modelo lineal (Ridge). Es un ejercicio exploratorio: muestra asociaciones aprendidas de los datos, no el efecto garantizado de una política.</p>
+        <p>Elige un municipio y mueve las variables con más peso en el modelo lineal (Ridge) del pronóstico de <span data-h="anio_pronostico">—</span>. Es un ejercicio exploratorio: muestra asociaciones aprendidas de los datos, no el efecto garantizado de una política.</p>
         <label class="bloque">Municipio
           <select id="s-municipio"></select>
         </label>

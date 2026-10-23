@@ -126,7 +126,7 @@ mark {
 /* ---------- Cabecera: la lista de llamado ---------- */
 .cabecera .hoja { padding-top: 4.5rem; padding-bottom: 4rem; }
 
-.lista-llamado { margin: 2.5rem 0 0; max-width: 40rem; }
+.lista-llamado { margin: 2rem 0 0; max-width: 40rem; }
 .lista-llamado figcaption {
   font-family: var(--f-titulo);
   font-weight: 500;
@@ -172,6 +172,27 @@ mark {
   .llamado.listo li:nth-child(5) mark { animation-delay: 0.48s; }
   @keyframes resaltar { to { background-size: 100% 100%; } }
 }
+
+/* ---------- Selector de horizonte: pestañas de cuaderno ---------- */
+.horizonte { border: 0; margin: 2rem 0 0; padding: 0; max-width: 40rem; }
+.horizonte legend { font-family: var(--f-titulo); font-weight: 500; color: var(--grafito-suave); padding: 0; margin-bottom: 0.5rem; }
+.pestanas { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.pestanas input { position: absolute; opacity: 0; pointer-events: none; }
+.pestanas label {
+  flex-direction: row; align-items: baseline; gap: 0.5rem;
+  padding: 0.5rem 1.1rem;
+  border: 2px solid var(--tinta);
+  border-radius: 3px;
+  background: var(--superficie);
+  color: var(--tinta);
+  cursor: pointer;
+}
+.pestanas label .anio { font-family: var(--f-titulo); font-weight: 700; font-size: 1.35rem; }
+.pestanas label .detalle { font-weight: 400; font-size: 0.9rem; }
+.pestanas input:checked + label { background: var(--tinta); color: var(--papel); }
+.pestanas input:focus-visible + label { outline: 3px solid var(--margen); outline-offset: 3px; }
+.nota-horizonte { font-size: 0.95rem; color: var(--grafito-suave); margin: 0.6rem 0 0; }
+.nota p + p { margin-top: 0.75rem; }
 
 /* ---------- Bloques de contenido ---------- */
 .pasos { padding-left: 1.4rem; }
