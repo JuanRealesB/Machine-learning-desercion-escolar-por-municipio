@@ -1,6 +1,6 @@
 # Alerta temprana de deserción escolar por municipio · Colombia
 
-Proyecto de machine learning con datos abiertos que estima, para cada municipio de Colombia, la tasa de deserción escolar del año siguiente y publica los resultados en un sitio de **GitHub Pages** que se reentrena solo cada mes.
+Proyecto de machine learning con datos abiertos que estima, para cada municipio de Colombia, la tasa de deserción escolar a uno y dos años y publica los resultados en un sitio de **GitHub Pages** que se reentrena solo cada mes.
 
 **Fuente de datos:** Ministerio de Educación Nacional, *MEN_ESTADISTICAS_EN_EDUCACION_EN_PREESCOLAR, BÁSICA Y MEDIA_POR_MUNICIPIO*, publicado en datos.gov.co con el identificador [`nudc-7mev`](https://www.datos.gov.co/d/nudc-7mev). Incluye cobertura, deserción, aprobación, reprobación y repitencia por municipio desde 2011.
 
@@ -8,12 +8,12 @@ Proyecto de machine learning con datos abiertos que estima, para cada municipio 
 
 1. Descarga el conjunto completo desde la API Socrata de datos.gov.co.
 2. Limpia códigos DANE, separadores de miles y tasas imposibles.
-3. Construye pares *indicadores del año t → deserción del año t + 1*, de modo que el modelo nunca use información del futuro.
+3. Construye pares *indicadores del año t → deserción del año t + 1* y *t → t + 2*, de modo que el modelo nunca use información del futuro.
 4. Compara tres modelos con validación temporal (entrena con años anteriores, evalúa en el último año conocido):
    - línea base de persistencia (repetir la deserción del año anterior),
    - regresión Ridge,
    - gradient boosting (`HistGradientBoostingRegressor`).
-5. Elige el de menor error, lo reentrena con toda la historia y pronostica el año siguiente.
+5. En cada horizonte elige el de menor error, lo reentrena con toda la historia y pronostica desde el último año publicado.
 6. Exporta `site/data/resultados.json`, que el sitio usa para mostrar la portada, las métricas, la importancia de variables, un explorador por municipio y un simulador.
 
 ## Estructura
@@ -31,6 +31,30 @@ Proyecto de machine learning con datos abiertos que estima, para cada municipio 
 ├── requirements.txt
 └── LICENSE
 ```
+
+
+## Ejecutarlo en tu computador
+
+```bash
+python -m venv .venv
+source .venv/bin/activate          # en Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python pipeline/entrenar.py        # descarga y entrena
+python -m http.server 8000 -d site # abre http://localhost:8000
+```
+
+Si ya tienes el CSV descargado: `python pipeline/entrenar.py --csv ruta/al/archivo.csv`.
+
+En Google Colab basta con subir el repositorio y ejecutar `!pip install -r requirements.txt` y `!python pipeline/entrenar.py`.
+
+## Por qué los años del pronóstico
+
+El MEN publica estas estadísticas con cerca de un año de retraso. Si el último año disponible es 2024, el sitio muestra dos pronósticos:
+
+- **2025 (a un año):** estima una cifra que probablemente ya ocurrió pero aún no se publica. Es el más preciso.
+- **2026 (a dos años):** mira más lejos y tiene más error; el sitio muestra el error de ambos para compararlos.
+
+Cuando el MEN publique un año nuevo, la ejecución mensual lo detecta y ambos pronósticos avanzan solos. Para cambiar los horizontes, edita `HORIZONTES = [1, 2]` en `pipeline/entrenar.py`.
 
 ## Decisiones metodológicas
 
