@@ -5,13 +5,14 @@ Alerta temprana de deserción escolar por municipio (Colombia)
 Pipeline reproducible:
   1. Descarga el conjunto "MEN_ESTADISTICAS_EN_EDUCACION_EN_PREESCOLAR, BÁSICA Y
      MEDIA_POR_MUNICIPIO" (id nudc-7mev) desde datos.gov.co (API Socrata).
-  2. Limpia y construye pares (indicadores del año t  ->  deserción del año t+1).
+  2. Limpia y construye pares (indicadores del año t  ->  deserción de t+1 y t+2).
   3. Entrena y compara tres modelos con validación temporal:
        - Línea base de persistencia (deserción t+1 = deserción t)
        - Regresión Ridge (lineal, interpretable; alimenta el simulador del sitio)
        - Gradient Boosting (HistGradientBoostingRegressor)
-  4. Elige el modelo con menor error en el año de prueba, lo reentrena con toda
-     la historia y pronostica la deserción del año siguiente al último disponible.
+  4. Para cada horizonte (1 y 2 años), elige el modelo con menor error en el año
+     de prueba, lo reentrena con toda la historia y pronostica desde el último año
+     publicado por el MEN.
   5. Exporta todo a site/data/resultados.json para el sitio de GitHub Pages.
 
 Uso:
@@ -46,6 +47,10 @@ URL_FICHA = f"https://www.datos.gov.co/d/{DATASET_ID}"
 RUTA_RAW = RAIZ / "data" / "raw" / "men_municipios.csv"
 RUTA_SALIDA = RAIZ / "site" / "data" / "resultados.json"
 SEMILLA = 42
+
+# Años hacia adelante que se pronostican desde el último año publicado.
+# 1 = año siguiente (más preciso); 2 = dos años adelante.
+HORIZONTES = [1, 2]
 
 # Nombres de columna de la API Socrata -> nombres internos
 RENOMBRAR = {
@@ -167,6 +172,7 @@ def cargar_y_limpiar(ruta_csv: Path) -> pd.DataFrame:
 # 3. Ingeniería de variables: año t -> deserción t+1
 # --------------------------------------------------------------------------
 def construir_variables(df: pd.DataFrame) -> pd.DataFrame:
+    """Variables del año t y objetivos de deserción en t+1, t+2, ..."""
     df = df.copy()
     df["log_poblacion"] = np.log1p(df["poblacion_5_16"])
 
@@ -176,10 +182,12 @@ def construir_variables(df: pd.DataFrame) -> pd.DataFrame:
     df = df.merge(previo, on=["cod_mpio", "anio"], how="left")
     df["delta_desercion"] = df["desercion"] - df["desercion_prev"]
 
-    objetivo = df[["cod_mpio", "anio", "desercion"]].copy()
-    objetivo["anio"] -= 1  # la deserción de t+1 se pega a la fila de t
-    objetivo = objetivo.rename(columns={"desercion": "y_desercion_siguiente"})
-    return df.merge(objetivo, on=["cod_mpio", "anio"], how="left")
+    for h in HORIZONTES:
+        objetivo = df[["cod_mpio", "anio", "desercion"]].copy()
+        objetivo["anio"] -= h  # la deserción de t+h se pega a la fila de t
+        objetivo = objetivo.rename(columns={"desercion": f"y_h{h}"})
+        df = df.merge(objetivo, on=["cod_mpio", "anio"], how="left")
+    return df
 
 
 # --------------------------------------------------------------------------
@@ -213,112 +221,126 @@ def _redondear(v, n=2):
     return None if v is None or (isinstance(v, float) and np.isnan(v)) else round(float(v), n)
 
 
-# --------------------------------------------------------------------------
-# 5. Orquestación
-# --------------------------------------------------------------------------
-def ejecutar(ruta_csv: Path) -> dict:
-    datos = construir_variables(cargar_y_limpiar(ruta_csv))
+def _ponderado(valores: pd.Series, pesos: pd.Series) -> float:
+    w = pesos.fillna(0)
+    return float(np.average(valores, weights=w)) if w.sum() > 0 else float(valores.mean())
 
-    pares = datos.dropna(subset=["y_desercion_siguiente", "desercion"]).copy()
-    pares["anio_objetivo"] = pares["anio"] + 1
+
+# --------------------------------------------------------------------------
+# 5. Un horizonte de pronóstico: indicadores de t -> deserción de t+h
+# --------------------------------------------------------------------------
+def entrenar_horizonte(datos: pd.DataFrame, actual: pd.DataFrame, h: int) -> dict:
+    y = f"y_h{h}"
+    pares = datos.dropna(subset=[y, "desercion"]).copy()
+    pares["anio_objetivo"] = pares["anio"] + h
     anio_prueba = int(pares["anio_objetivo"].max())
     entreno = pares[pares["anio_objetivo"] < anio_prueba]
     prueba = pares[pares["anio_objetivo"] == anio_prueba]
-    print(f"  Entrenamiento: {len(entreno):,} pares (objetivos hasta {anio_prueba - 1}) · "
-          f"Prueba: {len(prueba):,} pares (objetivo {anio_prueba})")
+    print(f"\n  Horizonte {h} año(s): {len(entreno):,} pares de entrenamiento · "
+          f"{len(prueba):,} de prueba (objetivo {anio_prueba})")
 
-    X_tr, y_tr = entreno[FEATURES], entreno["y_desercion_siguiente"]
-    X_te, y_te = prueba[FEATURES], prueba["y_desercion_siguiente"]
-
-    ridge = modelo_ridge().fit(X_tr, y_tr)
-    gbm = modelo_gbm().fit(X_tr, y_tr)
+    X_tr, y_tr = entreno[FEATURES], entreno[y]
+    X_te, y_te = prueba[FEATURES], prueba[y]
+    modelos = {"ridge": modelo_ridge().fit(X_tr, y_tr), "gbm": modelo_gbm().fit(X_tr, y_tr)}
     pred = {
         "persistencia": X_te["desercion"].to_numpy(),
-        "ridge": np.clip(ridge.predict(X_te), 0, 100),
-        "gbm": np.clip(gbm.predict(X_te), 0, 100),
+        "ridge": np.clip(modelos["ridge"].predict(X_te), 0, 100),
+        "gbm": np.clip(modelos["gbm"].predict(X_te), 0, 100),
     }
-    resultados_metricas = {k: metricas(y_te, v) for k, v in pred.items()}
-    for k, v in resultados_metricas.items():
-        print(f"  {k:<13} MAE={v['mae']:.3f}  RMSE={v['rmse']:.3f}  R²={v['r2']:.3f}")
+    res_metricas = {k: metricas(y_te, v) for k, v in pred.items()}
+    for k, v in res_metricas.items():
+        print(f"    {k:<13} MAE={v['mae']:.3f}  RMSE={v['rmse']:.3f}  R²={v['r2']:.3f}")
 
     # El modelo con menor error absoluto en el año de prueba es el que se publica
-    candidatos = {"ridge": ridge, "gbm": gbm}
-    elegido = min(candidatos, key=lambda k: resultados_metricas[k]["mae"])
-    print(f"  Modelo elegido para el pronóstico: {elegido}")
+    elegido = min(("ridge", "gbm"), key=lambda k: res_metricas[k]["mae"])
+    print(f"    Modelo elegido: {elegido}")
 
-    imp = permutation_importance(candidatos[elegido], X_te, y_te, n_repeats=10, random_state=SEMILLA,
-                                 scoring="neg_mean_absolute_error")
+    imp = permutation_importance(modelos[elegido], X_te, y_te, n_repeats=10,
+                                 random_state=SEMILLA, scoring="neg_mean_absolute_error")
     importancia = sorted(
         ({"variable": f, "etiqueta": VARIABLES[f], "importancia": round(float(m), 4),
           "desviacion": round(float(s), 4)}
          for f, m, s in zip(FEATURES, imp.importances_mean, imp.importances_std)),
         key=lambda d: d["importancia"], reverse=True)
 
-    # Reentrenar con todos los pares para pronosticar el año siguiente
-    X_all, y_all = pares[FEATURES], pares["y_desercion_siguiente"]
+    # Reentrenar con todos los pares y pronosticar desde el último año observado
+    X_all, y_all = pares[FEATURES], pares[y]
     ridge_final = modelo_ridge().fit(X_all, y_all)
-    gbm_final = modelo_gbm().fit(X_all, y_all)
+    final = ridge_final if elegido == "ridge" else modelo_gbm().fit(X_all, y_all)
+    prediccion = np.clip(final.predict(actual[FEATURES]), 0, 100)
+    umbral = float(np.percentile(prediccion, 90))
 
-    ultimo = int(datos["anio"].max())
-    actual = datos[(datos["anio"] == ultimo) & datos["desercion"].notna()].copy()
-    modelo_final = {"ridge": ridge_final, "gbm": gbm_final}[elegido]
-    actual["pred"] = np.clip(modelo_final.predict(actual[FEATURES]), 0, 100)
-    umbral = float(np.percentile(actual["pred"], 90))
-    actual = actual.sort_values("pred", ascending=False)
-
-    alertas = [{
-        "codigo": r.cod_mpio, "municipio": r.municipio, "departamento": r.departamento,
-        "poblacion": None if pd.isna(r.poblacion_5_16) else int(r.poblacion_5_16),
-        "desercion_actual": _redondear(r.desercion),
-        "desercion_pred": _redondear(r.pred),
-        "alerta": bool(r.pred >= umbral),
-        "x": [_redondear(getattr(r, f), 4) for f in FEATURES],
-    } for r in actual.itertuples()]
-
-    # Resumen departamental ponderado por población
-    def _pond(g, col):
-        w = g["poblacion_5_16"].fillna(0)
-        return float(np.average(g[col], weights=w)) if w.sum() > 0 else float(g[col].mean())
-
+    tmp = actual.assign(pred=prediccion)
     por_depto = sorted(({
         "departamento": d,
-        "desercion_actual": round(_pond(g, "desercion"), 2),
-        "desercion_pred": round(_pond(g, "pred"), 2),
+        "desercion_actual": round(_ponderado(g["desercion"], g["poblacion_5_16"]), 2),
+        "desercion_pred": round(_ponderado(g["pred"], g["poblacion_5_16"]), 2),
         "municipios": int(len(g)),
         "en_alerta": int((g["pred"] >= umbral).sum()),
-    } for d, g in actual.groupby("departamento")),
-        key=lambda d: d["desercion_pred"], reverse=True)
+    } for d, g in tmp.groupby("departamento")), key=lambda d: d["desercion_pred"], reverse=True)
 
-    # Tendencia nacional (promedio ponderado por población 5-16)
-    tendencia = []
-    for anio, g in datos.dropna(subset=["desercion"]).groupby("anio"):
-        w = g["poblacion_5_16"].fillna(0)
-        tendencia.append({
-            "anio": int(anio),
-            "ponderada": round(float(np.average(g["desercion"], weights=w)), 2) if w.sum() else None,
-            "mediana": round(float(g["desercion"].median()), 2),
-        })
-
-    # Parámetros del modelo Ridge para el simulador del navegador
     imp_r = ridge_final.named_steps["imputar"]
     esc_r = ridge_final.named_steps["escalar"]
     reg_r = ridge_final.named_steps["ridge"]
     simulador = {
-        "variables": FEATURES,
-        "etiquetas": [VARIABLES[f] for f in FEATURES],
         "medianas": [round(float(v), 4) for v in imp_r.statistics_],
         "medias": [round(float(v), 6) for v in esc_r.mean_],
         "escalas": [round(float(v), 6) for v in esc_r.scale_],
         "coeficientes": [round(float(v), 6) for v in reg_r.coef_],
         "intercepto": round(float(reg_r.intercept_), 6),
         "alpha": round(float(reg_r.alpha_), 4),
-        "rangos": [[round(float(np.nanpercentile(pares[f], 2)), 2),
-                    round(float(np.nanpercentile(pares[f], 98)), 2)] for f in FEATURES],
     }
 
-    real_vs_pred = [{"m": r.municipio, "d": r.departamento,
-                     "y": _redondear(r.y_desercion_siguiente), "p": _redondear(p)}
-                    for r, p in zip(prueba.itertuples(), pred[elegido])]
+    return {
+        "horizonte": h,
+        "anio_pronostico": int(actual["anio"].iloc[0]) + h,
+        "anio_prueba": anio_prueba,
+        "pares_entrenamiento": int(len(entreno)),
+        "pares_prueba": int(len(prueba)),
+        "umbral_alerta": round(umbral, 2),
+        "modelo_elegido": elegido,
+        "metricas": res_metricas,
+        "importancia": importancia,
+        "real_vs_pred": [{"m": r.municipio, "d": r.departamento,
+                          "y": _redondear(getattr(r, y)), "p": _redondear(p)}
+                         for r, p in zip(prueba.itertuples(), pred[elegido])],
+        "por_departamento": por_depto,
+        "pred": [_redondear(v) for v in prediccion],
+        "alerta": [bool(v >= umbral) for v in prediccion],
+        "simulador": simulador,
+    }
+
+
+# --------------------------------------------------------------------------
+# 6. Orquestación
+# --------------------------------------------------------------------------
+def ejecutar(ruta_csv: Path) -> dict:
+    datos = construir_variables(cargar_y_limpiar(ruta_csv))
+    ultimo = int(datos["anio"].max())
+    actual = (datos[(datos["anio"] == ultimo) & datos["desercion"].notna()]
+              .sort_values(["departamento", "municipio"]).reset_index(drop=True))
+
+    pronosticos = {str(h): entrenar_horizonte(datos, actual, h) for h in HORIZONTES}
+
+    municipios = [{
+        "codigo": r.cod_mpio, "municipio": r.municipio, "departamento": r.departamento,
+        "poblacion": None if pd.isna(r.poblacion_5_16) else int(r.poblacion_5_16),
+        "desercion_actual": _redondear(r.desercion),
+        "x": [_redondear(getattr(r, f), 4) for f in FEATURES],
+    } for r in actual.itertuples()]
+
+    tendencia = [{
+        "anio": int(anio),
+        "ponderada": round(_ponderado(g["desercion"], g["poblacion_5_16"]), 2),
+        "mediana": round(float(g["desercion"].median()), 2),
+    } for anio, g in datos.dropna(subset=["desercion"]).groupby("anio")]
+
+    variables = {
+        "nombres": FEATURES,
+        "etiquetas": [VARIABLES[f] for f in FEATURES],
+        "rangos": [[round(float(np.nanpercentile(datos[f], 2)), 2),
+                    round(float(np.nanpercentile(datos[f], 98)), 2)] for f in FEATURES],
+    }
 
     return {
         "meta": {
@@ -329,22 +351,14 @@ def ejecutar(ruta_csv: Path) -> dict:
             "generado": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "anio_min": int(datos["anio"].min()),
             "anio_max": ultimo,
-            "anio_pronostico": ultimo + 1,
-            "anio_prueba": anio_prueba,
             "filas": int(len(datos)),
             "municipios": int(datos["cod_mpio"].nunique()),
-            "pares_entrenamiento": int(len(entreno)),
-            "pares_prueba": int(len(prueba)),
-            "umbral_alerta": round(umbral, 2),
-            "modelo_elegido": elegido,
+            "horizontes": HORIZONTES,
         },
-        "metricas": resultados_metricas,
-        "importancia": importancia,
         "tendencia": tendencia,
-        "real_vs_pred": real_vs_pred,
-        "por_departamento": por_depto,
-        "alertas": alertas,
-        "simulador": simulador,
+        "variables": variables,
+        "municipios": municipios,
+        "pronosticos": pronosticos,
     }
 
 
