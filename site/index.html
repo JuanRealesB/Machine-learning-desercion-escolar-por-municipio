@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Alerta temprana de deserción escolar · Colombia</title>
+  <meta name="description" content="Modelo de machine learning que anticipa la deserción escolar por municipio en Colombia con datos abiertos del Ministerio de Educación Nacional.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📒</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Bitter:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <a class="saltar" href="#contenido">Ir al contenido</a>
+
+  <header class="cabecera">
+    <div class="hoja">
+      <p class="margen-etiqueta">Datos abiertos del MEN</p>
+      <div class="cuerpo">
+        <h1>¿Dónde será más alta la deserción escolar en <span data-meta="anio_pronostico">el próximo año</span>?</h1>
+        <p class="entrada">Un modelo de machine learning entrenado con <span data-meta="filas">miles de</span> registros oficiales del Ministerio de Educación Nacional estima, municipio por municipio, la tasa de deserción del año siguiente. Sirve para mirar antes, no para señalar.</p>
+
+        <figure class="lista-llamado" aria-labelledby="titulo-lista">
+          <figcaption id="titulo-lista">Mayor deserción estimada para <span data-meta="anio_pronostico">el próximo año</span></figcaption>
+          <ol id="top-alertas" class="llamado">
+            <li class="cargando">Cargando resultados…</li>
+          </ol>
+        </figure>
+      </div>
+    </div>
+  </header>
+
+  <main id="contenido">
+    <p id="estado" class="estado" hidden></p>
+
+    <section class="hoja" aria-labelledby="t-contexto">
+      <p class="margen-etiqueta">Contexto</p>
+      <div class="cuerpo">
+        <h2 id="t-contexto">Cómo ha cambiado la deserción en el país</h2>
+        <p>La tasa de deserción mide qué porcentaje de estudiantes matriculados abandonó el sistema durante el año escolar. La línea continua pondera cada municipio por su población de 5 a 16 años; la punteada muestra el municipio típico (mediana).</p>
+        <div class="grafico"><canvas id="g-tendencia" role="img" aria-label="Tendencia nacional de la deserción escolar por año"></canvas></div>
+      </div>
+    </section>
+
+    <section class="hoja" aria-labelledby="t-metodo">
+      <p class="margen-etiqueta">Método</p>
+      <div class="cuerpo">
+        <h2 id="t-metodo">De la tabla del Ministerio a un pronóstico</h2>
+        <ol class="pasos">
+          <li><strong>Descarga.</strong> El pipeline consulta la API de datos.gov.co (conjunto <a data-meta-href="url_fuente" href="https://www.datos.gov.co/d/nudc-7mev">nudc-7mev</a>) y guarda una copia.</li>
+          <li><strong>Limpieza.</strong> Normaliza códigos DANE, corrige separadores de miles y descarta tasas imposibles, como coberturas superiores a 200 %.</li>
+          <li><strong>Pares año a año.</strong> Cada fila combina los indicadores de un municipio en el año <em>t</em> con su deserción en el año <em>t + 1</em>. Así el modelo solo usa información disponible antes de que ocurra lo que predice.</li>
+          <li><strong>Validación temporal.</strong> Se entrena con los años anteriores y se evalúa en el último año conocido (<span data-meta="anio_prueba">—</span>), que el modelo nunca vio.</li>
+          <li><strong>Pronóstico.</strong> El modelo con menor error en la prueba (<span data-meta="modelo_nombre">—</span>) se reentrena con toda la historia y estima la deserción de <span data-meta="anio_pronostico">—</span> a partir de los datos de <span data-meta="anio_max">—</span>.</li>
+        </ol>
+        <aside class="nota">
+          <p><strong>Por qué no se usa la aprobación del mismo año.</strong> En estos datos, aprobación, reprobación y deserción del mismo año suman casi 100 %. Usarlas para predecir la deserción de ese mismo año sería hacer trampa: el modelo “adivinaría” con la respuesta a la vista. Por eso el objetivo es siempre el año siguiente.</p>
+        </aside>
+      </div>
+    </section>
+
+    <section class="hoja" aria-labelledby="t-desempeno">
+      <p class="margen-etiqueta">Desempeño</p>
+      <div class="cuerpo">
+        <h2 id="t-desempeno">¿Qué tan bien predice?</h2>
+        <p>Los tres modelos se evaluaron sobre <span data-meta="pares_prueba">—</span> municipios en <span data-meta="anio_prueba">—</span>. La referencia mínima es suponer que cada municipio repetirá la deserción del año anterior: un modelo solo vale la pena si la supera.</p>
+        <div class="tabla-envoltura">
+          <table class="tabla-metricas">
+            <caption>Error en puntos porcentuales de deserción (menor es mejor, salvo R²)</caption>
+            <thead><tr><th scope="col">Modelo</th><th scope="col">Error absoluto medio</th><th scope="col">Raíz del error cuadrático</th><th scope="col">R²</th></tr></thead>
+            <tbody id="tabla-metricas"></tbody>
+          </table>
+        </div>
+        <p id="lectura-metricas" class="lectura"></p>
+        <div class="grafico grafico-cuadrado"><canvas id="g-dispersion" role="img" aria-label="Deserción real frente a la predicha en el año de prueba"></canvas></div>
+        <p class="pie">Cada punto es un municipio en el año de prueba. Sobre la diagonal, la predicción coincide con lo observado.</p>
+      </div>
+    </section>
+
+    <section class="hoja" aria-labelledby="t-variables">
+      <p class="margen-etiqueta">Variables</p>
+      <div class="cuerpo">
+        <h2 id="t-variables">Qué información pesa más</h2>
+        <p>Importancia por permutación en el modelo elegido (<span data-meta="modelo_nombre">—</span>): cuánto empeora su error cuando se desordena al azar una variable. Mide utilidad para predecir, no causalidad.</p>
+        <div class="grafico" id="contenedor-importancia"><canvas id="g-importancia" role="img" aria-label="Importancia de las variables del modelo"></canvas></div>
+      </div>
+    </section>
+
+    <section class="hoja" aria-labelledby="t-explorar">
+      <p class="margen-etiqueta">Explorar</p>
+      <div class="cuerpo ancho">
+        <h2 id="t-explorar">Busca tu municipio</h2>
+        <p>Los municipios <mark>resaltados</mark> están en el 10 % con mayor deserción estimada (umbral: <span data-meta="umbral_alerta">—</span> %).</p>
+        <div class="filtros">
+          <label>Departamento
+            <select id="f-depto"><option value="">Todos</option></select>
+          </label>
+          <label>Municipio
+            <input id="f-buscar" type="search" placeholder="Escribe un nombre" autocomplete="off">
+          </label>
+          <label class="casilla"><input id="f-alerta" type="checkbox"> Solo en alerta</label>
+        </div>
+        <div class="tabla-envoltura">
+          <table class="tabla-municipios">
+            <caption id="resumen-tabla" aria-live="polite"></caption>
+            <thead><tr>
+              <th scope="col">Municipio</th><th scope="col">Departamento</th>
+              <th scope="col" class="num">Deserción <span data-meta="anio_max"></span></th>
+              <th scope="col" class="num">Estimada <span data-meta="anio_pronostico"></span></th>
+              <th scope="col" class="num">Cambio</th>
+            </tr></thead>
+            <tbody id="tabla-municipios"></tbody>
+          </table>
+        </div>
+        <button id="ver-mas" class="boton" type="button">Mostrar 25 más</button>
+
+        <h3>Por departamento</h3>
+        <p>Promedio ponderado por población de 5 a 16 años.</p>
+        <div class="grafico" id="contenedor-deptos"><canvas id="g-deptos" role="img" aria-label="Deserción actual y estimada por departamento"></canvas></div>
+      </div>
+    </section>
+
+    <section class="hoja" aria-labelledby="t-simulador">
+      <p class="margen-etiqueta">Simular</p>
+      <div class="cuerpo">
+        <h2 id="t-simulador">¿Qué pasaría si cambian los indicadores?</h2>
+        <p>Elige un municipio y mueve las variables con más peso en el modelo lineal (Ridge). Es un ejercicio exploratorio: muestra asociaciones aprendidas de los datos, no el efecto garantizado de una política.</p>
+        <label class="bloque">Municipio
+          <select id="s-municipio"></select>
+        </label>
+        <div id="s-controles" class="controles"></div>
+        <div class="resultado-sim" aria-live="polite">
+          <p>Estimación con sus datos reales: <strong id="s-base">—</strong></p>
+          <p>Estimación con tus cambios: <strong id="s-nuevo" class="cifra">—</strong> <span id="s-dif"></span></p>
+        </div>
+        <button id="s-reiniciar" class="boton" type="button">Restablecer valores</button>
+      </div>
+    </section>
+
+    <section class="hoja" aria-labelledby="t-limites">
+      <p class="margen-etiqueta">Límites</p>
+      <div class="cuerpo">
+        <h2 id="t-limites">Lo que este modelo no puede decir</h2>
+        <p>Trabaja con promedios municipales: no ve estudiantes, colegios ni sedes, y no reemplaza los sistemas de alerta de cada institución. Los municipios pequeños tienen tasas más inestables porque pocos casos mueven mucho el porcentaje. Un municipio en alerta necesita atención y recursos, no estigma.</p>
+        <p>Los datos del MEN excluyen valores atípicos y las tasas de cobertura de 2018 y 2019 se calcularon con las proyecciones del Censo 2018, lo que puede producir saltos entre años.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="hoja pie-pagina">
+    <p class="margen-etiqueta">Fuente</p>
+    <div class="cuerpo">
+      <p>Datos: <a data-meta-href="url_fuente" href="https://www.datos.gov.co/d/nudc-7mev"><span data-meta="fuente">Ministerio de Educación Nacional</span></a>, publicados en datos.gov.co. Resultados generados el <span data-meta="generado">—</span>. El código es abierto y se reentrena automáticamente cada mes con GitHub Actions.</p>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>
