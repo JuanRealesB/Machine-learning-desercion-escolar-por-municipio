@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+# La copia descargada se regenera en cada ejecución
+data/raw/*.csv
+# Los resultados se generan en GitHub Actions; quita esta línea si prefieres versionarlos
+site/data/resultados.json
