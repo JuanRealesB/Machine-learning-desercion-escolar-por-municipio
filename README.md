@@ -32,29 +32,6 @@ Proyecto de machine learning con datos abiertos que estima, para cada municipio 
 └── LICENSE
 ```
 
-## Publicarlo en GitHub Pages
-
-1. Crea un repositorio nuevo en GitHub (por ejemplo `ml-desercion-colombia`) y sube todos estos archivos a la rama `main`.
-2. En el repositorio entra a **Settings → Pages** y en **Build and deployment → Source** selecciona **GitHub Actions**.
-3. Ve a la pestaña **Actions**, abre *Entrenar modelo y publicar sitio* y pulsa **Run workflow** (también se ejecuta solo con cada `push`).
-4. Cuando termine (2 a 4 minutos), el sitio queda en `https://TU-USUARIO.github.io/ml-desercion-colombia/`.
-
-Opcional: datos.gov.co limita las consultas anónimas. Si la descarga falla por límite, crea un *app token* gratuito en datos.gov.co y guárdalo en **Settings → Secrets and variables → Actions** con el nombre `SOCRATA_APP_TOKEN`.
-
-## Ejecutarlo en tu computador
-
-```bash
-python -m venv .venv
-source .venv/bin/activate          # en Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python pipeline/entrenar.py        # descarga y entrena
-python -m http.server 8000 -d site # abre http://localhost:8000
-```
-
-Si ya tienes el CSV descargado: `python pipeline/entrenar.py --csv ruta/al/archivo.csv`.
-
-En Google Colab basta con subir el repositorio y ejecutar `!pip install -r requirements.txt` y `!python pipeline/entrenar.py`.
-
 ## Decisiones metodológicas
 
 - **Sin fuga de información.** En estos datos, aprobación + reprobación + deserción del mismo año suman cerca de 100 %. Por eso el objetivo es siempre la deserción del año siguiente.
